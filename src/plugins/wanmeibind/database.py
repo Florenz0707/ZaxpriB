@@ -1,7 +1,7 @@
 import sqlite3
 from nonebot.log import logger
 
-DB_PATH = 'wanmeidata.db'
+DB_PATH = './resources/databases/wanmeidata.db'
 
 def init_db():
     try:

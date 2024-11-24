@@ -16,7 +16,7 @@ async def search_user(id: str) -> dict:
             response = await client.post("https://pwaweblogin.wmpvp.com/api-user/search", headers=headers, data=data)
             response.raise_for_status()
             if len(response.json()['data']['users']) == 0:
-                return {"error": "未找到该用户！"}
+                return {"error": " 未找到该用户！"}
             return response.json()
     except httpx.HTTPStatusError:
         return {"error": "Failed to fetch data"}
@@ -84,7 +84,7 @@ async def get_card_info(uid: str) -> dict:
             
             # 检查返回的数据是否符合预期
             if not data.get('data'):
-                return {"error": "未找到用户信息！"}
+                return {"error": " 未找到用户信息！"}
             
             return data
 

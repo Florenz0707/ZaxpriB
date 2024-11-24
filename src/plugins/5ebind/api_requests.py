@@ -1,25 +1,57 @@
 import httpx
 from nonebot.log import logger
-
+import nonebot
+config = nonebot.get_driver().config
 async def search_user(id: str) -> dict:
-    headers = {
-
+    url = "https://app.5eplay.com/api/csgo/data/search"
+    params = {
+        'keywords': id,
+        'page': "1"
     }
+    headers = {
+        'User-Agent': "okhttp/4.10.0",
+        'Connection': "Keep-Alive",
+        'Accept-Encoding': "gzip",
+        'token': config.fiveetoken
+    }
+
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"https://arena.5eplay.com/api/search?keywords={id}", headers=headers)
+            response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
             logger.info(response.json())
-            if len(response.json()['data']['user']['list']) == 0:
+            if not response.json().get('data', {}).get('list', []):
                 return {"error": "未找到该用户！"}
             return response.json()
 
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
         return {"error": "Failed to fetch data"}
     except Exception as e:
         logger.error(f"Error fetching user info: {str(e)}")
         return {"error": str(e)}
     
+async def get_uuid(domain: str) -> dict:
+    url = f"https://app.5eplay.com/api/csgo/friend/check_friend/{domain}"
+    headers = {
+        'User-Agent': "okhttp/4.10.0",
+        'Connection': "Keep-Alive",
+        'Accept-Encoding': "gzip",
+        'token': config.fiveetoken
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            logger.info(response.json())
+            return response.json()["data"]["uuid"]
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
+        return {"error": "Failed to fetch data"}
+    except Exception as e:
+        logger.error(f"Error fetching friend status: {str(e)}")
+        return {"error": str(e)}
 async def info_5e(id: str) -> dict:
     params = {
         'domain': id

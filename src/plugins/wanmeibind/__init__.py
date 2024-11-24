@@ -37,18 +37,37 @@ __plugin_meta__ = PluginMetadata(
     extra={},
 )
 
+def levenshtein_distance(s1, s2):
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    
+    if len(s2) == 0:
+        return len(s1)
+    
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1, 1):
+        current_row = [i]
+        for j, c2 in enumerate(s2, 1):
+            insertions = previous_row[j] + 1
+            deletions = current_row[j - 1] + 1
+            substitutions = previous_row[j - 1] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
+
 async def take_screenshot(page, file_path):
     await page.goto(f"file://{file_path}", wait_until="domcontentloaded")
-    await page.wait_for_timeout(2000)
-    pic = await page.screenshot(full_page=True, path="./html2pic.png")
+    await page.wait_for_timeout(500)
+    pic = await page.screenshot(full_page=True)
     image = Image.open(io.BytesIO(pic))
     cropped_image = image.crop((0, 0, 1509, 595))
     output_buffer = io.BytesIO()
     cropped_image.save(output_buffer, format='JPEG')  # 根据需要选择合适的格式
     cropped_image_bytes = output_buffer.getvalue()
-    return cropped_image_bytes
     os.remove(file_path)
-    os.remove("./html2pic.png")
+    return cropped_image_bytes
+
 
 
 def generate_hex_filename():
@@ -89,8 +108,8 @@ def generate_progress_circle(current_value, max_value):
     # 创建SVG元素
     svg_template = f'''
         <path style="stroke-dasharray: {progress_length}px, 292.168px; stroke-dashoffset: 0px; transition: stroke-dashoffset 0.3s ease 0s, stroke-dasharray 0.3s ease 0s, stroke 0.3s ease 0s, stroke-width 0.06s ease 0.3s;" class="ant-progress-circle-path" fill-opacity="0" stroke-width="7" stroke-linecap="round" stroke="url(#ant-progress-gradient-60)" d="M 50,50 m 0,-46.5
-     a 46.5,46.5 0 1 1 0,93
-     a 46.5,46.5 0 1 1 0,-93"></path>
+    a 46.5,46.5 0 1 1 0,93
+    a 46.5,46.5 0 1 1 0,-93"></path>
     '''
     return svg_template
 
@@ -101,24 +120,42 @@ def save_html(rendered_html: str, filename: str):
         f.write(rendered_html)
     print(f"HTML saved to {output_path}")
 
-wanmei_bind = on_command("wanmeibind", aliases={"完美绑定"}, block=True, priority=3)
+wanmei_bind = on_command("wanmeibind", aliases={"完美绑定","wmbd"}, block=True, priority=3)
 
 @wanmei_bind.handle()
 async def bind_handler(matcher: Matcher, event: Event, arg: Message = CommandArg()):
     steamid = arg.extract_plain_text().strip()
 
     if not steamid:
-        await UniMessage.at(event.get_user_id()).text("\n请在指令后面加上你的steam64位id或是用户名！\n\n或使用指令 帮助 来获取更多信息").finish()
+        await UniMessage.at(event.get_user_id()).text("\n请在指令后面加上你的steam64位id或是用户名！\n\n或使用指令 帮助 来获取更多信息").finish(reply_to=True)
     user_info = await info_wm(steamid)
     logger.info(user_info)
     if "error" in user_info or steamid.isdigit() == False:
         user_info = await search_user(steamid)
         if "error" in user_info:
-            await UniMessage.at(event.get_user_id()).text(user_info['error']).finish()
-        steamid = user_info['data']['users'][0]['steam_id']
-        name = user_info['data']['users'][0]['nickname']
-    else:
-        name = user_info['data']['name']
+            await UniMessage.at(event.get_user_id()).text(user_info['error']).finish(reply_to=True)
+
+        users = user_info['data']['users']
+        best_match = None
+        min_distance = float('inf')
+        for user in users:
+            name = user['nickname']
+            
+            # 计算 domain 和 steamid 之间的相似度
+            distance = levenshtein_distance(name, steamid)
+            
+            # 如果当前距离更小，则更新最佳匹配
+            if distance < min_distance:
+                min_distance = distance
+                best_match = user
+        
+        if best_match:
+            matched_name = best_match['nickname']
+            matched_domain = best_match['steam_id']
+            steamid = matched_domain
+        else:
+            await UniMessage.at(event.get_user_id()).text(" 未找到匹配的用户...").finish(reply_to=True)
+
     user_id = str(event.get_user_id())
     bind_steam_id(user_id, steamid)
     card_info = await get_card_info(steamid)
@@ -138,12 +175,11 @@ async def bind_handler(matcher: Matcher, event: Event, arg: Message = CommandArg
 
     card_data = card_info.get('data', {}).get('card_info', {})
     ladder_stats = card_data.get('ladder_season_stats', {})
-
+    if isinstance(ladder_stats, list):
+        return await UniMessage.at(event.get_user_id()).text(f"\n\n绑定成功!\n\n你这个赛季没有玩过游戏哦，没法给您生成战绩简报的说...\n\n已绑定用户{card_data['nickname']}\n如绑定有误请使用指令 搜索完美用户 用户名 来获取Steam64位ID！").finish(reply_to=True)
     user = {
         "avatarurl": card_data['avatar'],
-        "frameurl": card_data.get('avatarBorder', {}).get('image', ""),
         "name": card_data['nickname'],
-        "power": card_data.get('perfectPower', {}).get('perfectPower'),
         "eloimg": "",
         "elo": card_data.get('score', ""),
         "we": round(float(ladder_stats.get('pri_avg', "0")), 1),
@@ -156,7 +192,15 @@ async def bind_handler(matcher: Matcher, event: Event, arg: Message = CommandArg
         "deaths": ladder_stats.get('death_num', "1"),  # default to 1 to avoid division by zero
         "rws": round(float(ladder_stats.get('rws_avg', "0")), 2)
     }
-
+    
+    if isinstance(card_data.get('avatarBorder', {}), dict):
+        user["frameurl"] = card_data.get('avatarBorder', {}).get('image',"")
+    else:
+        user["frameurl"] = ""
+    if isinstance(card_data.get('perfectPower', {}), dict):
+        user["power"] = card_data.get('perfectPower', {}).get('perfectPower',"")
+    else:
+        user["power"] = ""
     logger.info(user)
 
     # Calculate up/down status for metrics
@@ -179,13 +223,13 @@ async def bind_handler(matcher: Matcher, event: Event, arg: Message = CommandArg
         user["headshotrate"], [50, 30, 0], ["green", "", "red"]
     )
     user["winratecolor"] = get_color(
-        user["winrate"], [50, 40, 0], ["green", "", "red"]
+        user["winrate"], [57, 40, 0], ["green", "", "red"]
     )
     user["adrcolor"] = get_color(
         user["adr"], [100, 70, 0], ["green", "", "red"]
     )
     user["kdcolor"] = get_color(
-        user["kd"], [1, 0.8, 0], ["green", "", "red"]
+        user["kd"], [1.4, 0.8, 0], ["green", "", "red"]
     )
     user["rwscolor"] = get_color(
         user["rws"], [12, 8, 0], ["green", "", "red"]
@@ -210,20 +254,20 @@ async def bind_handler(matcher: Matcher, event: Event, arg: Message = CommandArg
 
     async with get_new_page(viewport={"width": 984, "height": 298}) as page:
         picture = await take_screenshot(page, html_path)
-    await UniMessage.at(event.get_user_id()).image(raw=picture).text("\n绑定成功!").finish()
+    await UniMessage.at(event.get_user_id()).image(raw=picture).text(f"\n绑定成功!\n\n如绑定有误请使用指令 搜索完美用户 用户名 来获取Steam64位ID！").finish(reply_to=True)
 
-wanmeisearch = on_command("搜索完美用户", aliases={}, block=True, priority=4)
+wanmeisearch = on_command("搜索完美用户", aliases={"sswmyh"}, block=True, priority=4)
 
 @wanmeisearch.handle()
 async def wanmeisearch_handler(matcher: Matcher, event: Event, arg: Message = CommandArg()):
     name = arg.extract_plain_text().strip()
     if not name:
-        await UniMessage.at(event.get_user_id()).text("\n请输入要查找的用户名！\n\n或使用指令 帮助 来获取更多信息").finish()
+        await UniMessage.at(event.get_user_id()).text("\n请输入要查找的用户名！\n\n或使用指令 帮助 来获取更多信息").finish(reply_to=True)
 
     user_info = await search_user(name)
 
     if "error" in user_info:
-        await UniMessage.at(event.get_user_id()).text(user_info['error']).finish()
+        await UniMessage.at(event.get_user_id()).text(user_info['error']).finish(reply_to=True)
     else:
         msg = "\n"
         for user in user_info['data']['users']:
@@ -231,4 +275,4 @@ async def wanmeisearch_handler(matcher: Matcher, event: Event, arg: Message = Co
             username = user['nickname']
             domain = user['steam_id']
             msg += f"\n用户名: {username}\nSteam ID: {domain}\n---------------"
-        await UniMessage.at(event.get_user_id()).text(msg).finish()
+        await UniMessage.at(event.get_user_id()).text(msg).finish(reply_to=True)

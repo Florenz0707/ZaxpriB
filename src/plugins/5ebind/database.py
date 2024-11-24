@@ -1,7 +1,7 @@
 import sqlite3
 from nonebot.log import logger
 
-DB_PATH = '5edata.db'
+DB_PATH = './resources/databases/5edata.db'
 
 def init_db():
     try:
