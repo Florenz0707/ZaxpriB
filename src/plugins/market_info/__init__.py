@@ -1,153 +1,211 @@
-from nonebot import require
+# nonebot 包
+from nonebot.permission import SUPERUSER
+from nonebot import require, logger
+from nonebot import on_command
+from nonebot.adapters import Message, Event
+from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
+from nonebot.plugin import PluginMetadata
+
+# 导入 nonebot 插件
+require("nonebot_plugin_waiter")
+from nonebot_plugin_waiter import waiter, prompt, suggest
+
+
+require("nonebot_plugin_alconna")
+from nonebot_plugin_alconna import UniMessage
+
 require("nonebot_plugin_htmlrender")
 from nonebot_plugin_htmlrender import (
     template_to_pic,
     get_new_page,
     html_to_pic
 )
+
+# 导入子模块
+from .database import fetch_by_id, fetch_by_name
+
+# 其他模块
 import uuid
-from nonebot import on_command
-from nonebot.adapters import Message, Event
-from nonebot.matcher import Matcher
-from nonebot.params import CommandArg
-from nonebot import require, logger
-require("nonebot_plugin_alconna")
-from nonebot_plugin_alconna import UniMessage
-from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
-from .databse import query_database
 import re
 import os
-from nonebot.plugin import PluginMetadata
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+
+# 模块导入顺序为nonebot包，nonebot插件，子模块，其他模块
+# 且需含有PluginMetadata
+
 __plugin_meta__ = PluginMetadata(
     name="CS饰品",
     description="可查询饰品大盘数据，饰品详细信息，饰品涨、跌幅等排行榜",
-    usage="使用 /帮助 获取更多信息",
+    usage="使用 cs.help 获取更多信息",
     type="application",
     extra={},
 )
+
 # 常量定义
 MARKETS = ["BUFF", "悠悠有品", "C5", "IGXE"]
 RANK_TYPES = ["周涨幅", "周跌幅", "周热销", "周热租"]
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-def generate_hex_filename():
+# 常用函数
+
+
+# 生成随机文件名
+def generate_hex_filename() ->str:
     return f"{uuid.uuid4().hex}.html"
 
+
+# 模糊匹配
 def fuzzy_case_match(s1: str, s2: str) -> bool:
-    """
-    模糊大小写匹配函数。
-    
-    参数:
-    s1 (str): 第一个字符串。
-    s2 (str): 第二个字符串。
-    
-    返回:
-    bool: 如果忽略大小写后的字符串相等则返回 True，否则返回 False。
-    """
     return s1.lower() == s2.lower()
 
-async def take_screenshot(page, file_path):
+
+# 生成截图
+async def take_screenshot(page, file_path) -> None:
     await page.goto(f"file://{file_path}", wait_until="domcontentloaded")
     await page.wait_for_timeout(2000)
     pic = await page.screenshot(full_page=True)
     await UniMessage.image(raw=pic).send(reply_to=True)
     os.remove(file_path)
 
+
+help_menu = on_command("cs.help", aliases={"cs.menu"}, priority=5, block=True)
+
+
+@help_menu.handle()
+async def _(event: Event):
+    """
+    帮助列表，亦可使用元数据。
+    """
+    message = """1> cs.market 查询市场大盘情况
+2> cs.search 查询某一饰品价格
+3> cs.rank 查看各种榜单"""
+    await UniMessage.at(event.get_user_id()).text(message).finish(reply_to=True)  # 机器人消息格式为回复且在第一行at用户，在第二行接上其他消息
+
+
 # CS大盘数据命令
-cs_market_info = on_command("CS大盘数据", aliases={"Cs大盘数据", "cS大盘数据", "cs大盘数据"}, block=True)
+cs_market_info = on_command("cs.market", priority=5, block=True)
+
+
 @cs_market_info.handle()
 async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
-    name = arg.extract_plain_text().strip()
-    if name == "":
-        await UniMessage.at(event.get_user_id()).text("\n请输入要查询的市场名!\n\n可查询市场：BUFF|悠悠有品|IGXE|C5\n\n示例： CS大盘数据 BUFF").finish(reply_to=True)
+    # 获取指令后参数
+    name = arg.extract_plain_text().strip()  # 去除多余空格
 
+    if name == "":
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请输入要查询的市场名!\n可查询：BUFF|悠悠有品|IGXE|C5\n示例： cs.market BUFF").finish(
+            reply_to=True)  # 机器人消息格式为回复且在第一行at用户，在第二行接上其他消息
+    # 匹配输入名称
     market_type = next((i for i, market in enumerate(MARKETS) if fuzzy_case_match(name, market)), None)
     if market_type is None:
-        await UniMessage.at(event.get_user_id()).text("\n请输入正确的市场名!\n\n可查询市场：BUFF|悠悠有品|IGXE|C5\n\n示例： CS大盘数据 BUFF").finish(reply_to=True)
-
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请输入正确的市场名!\n可查询：BUFF|悠悠有品|IGXE|C5\n示例： cs.market BUFF").finish(
+            reply_to=True)  # 机器人消息格式为回复且在第一行at用户，在第二行接上其他消息
+    # 加载模板
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template("markets.html.jinja2")
-    rendered_html = template.render(page_now=market_type)
-    new_html = generate_hex_filename()
-    output_path = TEMPLATE_DIR / new_html
+    rendered_html = template.render(page_now=market_type)  # 传入参数并生成html
+    new_html = generate_hex_filename()  # 生成随机文件名
+    output_path = TEMPLATE_DIR / new_html  # 生成路径
     with open(output_path, "w", encoding="utf-8") as file:
-        file.write(rendered_html)
+        file.write(rendered_html)  # 写文件
 
     async with get_new_page(viewport={"width": 500, "height": 300}) as page:
-        await take_screenshot(page, output_path)
+        await take_screenshot(page, output_path)  # 截图
+
 
 # 搜索饰品命令
-cs_market_search = on_command("搜索饰品", block=True)
+cs_market_search = on_command("cs.search", block=True)
+
+
 @cs_market_search.handle()
 async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
-    name = arg.extract_plain_text().strip()
-    if name == "" or len(name) < 2:
-        await UniMessage.at(event.get_user_id()).text("请输入要搜索的饰品名称").finish(reply_to=True)
+    name = arg.extract_plain_text().strip().split(sep=" ")
+    if len(name) == 0:
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请告诉我想要查询哪件商品吧").send(reply_to=True)
+    else:
+        # 根据关键词模糊搜索可能的商品信息
+        goods_list = fetch_by_name(name)
+        if goods_list is None:
+            await UniMessage.at(event.get_user_id()).text("\n啊嘞？没找到哦~").finish(reply_to=True)
+        selected_list = ""
+        for i in range(len(goods_list)):
+            selected_list += f"{i + 1}: {goods_list[i][0]}\n"
+        await UniMessage.at(event.get_user_id()).text(
+            f"\n{selected_list}上面已为您展示搜索到的商品，发送对应的序号来选择吧！\n(限时一分钟，发送'0'取消选择)").send(reply_to=True)
 
-    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
-    template = env.get_template("search.html.jinja2")
-    rendered_html = template.render(data_value=name)
-    new_html = generate_hex_filename()
-    output_path = TEMPLATE_DIR / new_html
-    with open(output_path, "w", encoding="utf-8") as file:
-        file.write(rendered_html)
+        # 请求进一步确认
+        @waiter(waits=["message"], keep_session=True)
+        async def check(_event: Event):
+            return _event.get_plaintext()
 
-    async with get_new_page(viewport={"width": 500, "height": 300}) as page:
-        await take_screenshot(page, output_path)
+        resp = await check.wait(timeout=60)
+        if resp is None:
+            await UniMessage.at(event.get_user_id()).text(
+                "\n什么嘛！根本没在听我讲话！我走了！").finish(reply_to=True)
+        if not resp.isdigit() or int(resp) < 0 or int(resp) > len(goods_list):
+            await UniMessage.at(event.get_user_id()).text(
+                "\n没听懂哦！可以重新调用命令哦~").finish(reply_to=True)
+        if int(resp) == 0:
+            await UniMessage.at(event.get_user_id()).text(
+                "\n已取消选择！有什么需求可以找我哦~").finish(reply_to=True)
 
-# 饰品查询命令
-cs_goods_search = on_command("饰品查询", aliases={"查询饰品"}, block=True)
-@cs_goods_search.handle()
-async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
-    name = arg.extract_plain_text().strip()
-    if name == "":
-        await UniMessage.at(event.get_user_id()).text("\n请输入要搜索的饰品名称 \n\n可使用 搜索饰品 饰品名 命令查询").finish(reply_to=True)
-    elif not name.isdigit():
-        await UniMessage.at(event.get_user_id()).text("\n请输入正确的饰品ID \n\n可使用 搜索饰品 饰品名 命令查询").finish(reply_to=True)
+        await UniMessage.at(event.get_user_id()).text(
+            "\n收到啦~正在查询中......").send()
+        # 生成商品信息截图
+        env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
+        template = env.get_template("item.html.jinja2")
+        rendered_html = template.render(data_value=goods_list[int(resp) - 1][0])
+        new_html = generate_hex_filename()
+        output_path = TEMPLATE_DIR / new_html
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(rendered_html)
 
-    goods_name, goods_hash_name = query_database(int(name))
-    if goods_name is None or goods_hash_name is None:
-        await UniMessage.at(event.get_user_id()).text("\n未找到该饰品").finish(reply_to=True)
+        async with get_new_page(viewport={"width": 750, "height": 900}) as page:
+            await take_screenshot(page, output_path)
 
-    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
-    template = env.get_template("item.html.jinja2")
-    logger.info(goods_name)
-    rendered_html = template.render(data_value=goods_name)
-    new_html = generate_hex_filename()
-    output_path = TEMPLATE_DIR / new_html
-    with open(output_path, "w", encoding="utf-8") as file:
-        file.write(rendered_html)
-
-    async with get_new_page(viewport={"width": 750, "height": 900}) as page:
-        await take_screenshot(page, output_path)
 
 # 饰品排行命令
-cs_goods_rank = on_command("饰品排行", block=True)
+cs_goods_rank = on_command("cs.rank", block=True)
+
+
 def parse_input(input_str):
+    """
+    解析rank命令参数，页码默认为1
+    """
     pattern = r'^(周涨幅|周跌幅|周热销|周热租)?\s*(\d+)?$'
     match = re.match(pattern, input_str)
     rank_type, page_num = match.groups() if match else ("", 1)
     page_num = int(page_num) if page_num else 1
     return rank_type, page_num
 
+
 @cs_goods_rank.handle()
 async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
     name = arg.extract_plain_text().strip()
     if name == "":
-        await UniMessage.at(event.get_user_id()).text("\n请输入要查询的排行榜 \n\n可查询排行榜：周涨幅|周跌幅|周热销|周热租\n\n示例： 饰品排行 周涨幅").finish(reply_to=True)
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请输入要查询的榜单！ \n可查询排行榜：周涨幅|周跌幅|周热销|周热租\n示例： cs.rank 周涨幅").finish(
+            reply_to=True)
 
-    rank_type_, page_num = parse_input(name)
-    if rank_type_ not in RANK_TYPES:
-        await UniMessage.at(event.get_user_id()).text("\n请输入正确的排行榜名称！ \n\n可查询排行榜：周涨幅|周跌幅|周热销|周热租\n\n示例： 饰品排行 周涨幅").finish(reply_to=True)
+    rank_type, page_num = parse_input(name)  # 解析输入参数
+    if rank_type not in RANK_TYPES:
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请输入要正确的榜单名称！ \n可查询排行榜：周涨幅|周跌幅|周热销|周热租\n示例： cs.rank 周涨幅").finish(
+            reply_to=True)
 
-    rank_type_num = RANK_TYPES.index(rank_type_)
+    # 你问我为什么这么写？html里面是用的列表存储排行榜，传入下标来指定要查询的排行榜
+    rank_type_num = RANK_TYPES.index(rank_type)
+    # 加载模板
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template("rank.html.jinja2")
     rendered_html = template.render(rank_type=rank_type_num, page=page_num)
     new_html = generate_hex_filename()
     output_path = TEMPLATE_DIR / new_html
-    with open(output_path, "w", encoding="utf-8") as file:
+    with open(output_path, "w", encoding="utf-8") as file:  # 需改为异步操作
         file.write(rendered_html)
 
     async with get_new_page(viewport={"width": 650, "height": 900}) as page:
