@@ -23,7 +23,7 @@ from nonebot_plugin_htmlrender import (
 )
 
 # 导入子模块
-from .database import fetch_by_id, fetch_by_name
+from .database import fetch_by_name
 
 # 其他模块
 import uuid
@@ -122,10 +122,13 @@ cs_market_search = on_command("cs.search", block=True)
 
 @cs_market_search.handle()
 async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
-    name = arg.extract_plain_text().strip().split(sep=" ")
+    name = arg.extract_plain_text().strip()
     if len(name) == 0:
         await UniMessage.at(event.get_user_id()).text(
             "\n请告诉我想要查询哪件商品吧").send(reply_to=True)
+    elif len(name) < 3:
+        await UniMessage.at(event.get_user_id()).text(
+            "\n请输入至少三个字符哦").send(reply_to=True)
     else:
         # 根据关键词模糊搜索可能的商品信息
         goods_list = fetch_by_name(name)
@@ -133,7 +136,7 @@ async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
             await UniMessage.at(event.get_user_id()).text("\n啊嘞？没找到哦~").finish(reply_to=True)
         selected_list = ""
         for i in range(len(goods_list)):
-            selected_list += f"{i + 1}: {goods_list[i][0]}\n"
+            selected_list += f"{i + 1}: {goods_list[i]}\n"
         await UniMessage.at(event.get_user_id()).text(
             f"\n{selected_list}上面已为您展示搜索到的商品，发送对应的序号来选择吧！\n(限时一分钟，发送'0'取消选择)").send(reply_to=True)
 
@@ -158,7 +161,7 @@ async def _(matcher: Matcher, event: Event, arg: Message = CommandArg()):
         # 生成商品信息截图
         env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
         template = env.get_template("item.html.jinja2")
-        rendered_html = template.render(data_value=goods_list[int(resp) - 1][0])
+        rendered_html = template.render(data_value=goods_list[int(resp) - 1])
         new_html = generate_hex_filename()
         output_path = TEMPLATE_DIR / new_html
         with open(output_path, "w", encoding="utf-8") as file:
