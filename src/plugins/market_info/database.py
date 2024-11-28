@@ -2,11 +2,17 @@ from .items import item_names
 
 goods = list(item_names.keys())
 
-def exact_match(keyword):
+def exact_match(keyword: str) -> list:
+    """
+    精确匹配，返回匹配列表。
+    """
     lower_case_keywords = keyword.lower().split()
     return [item for item in goods if all(kw in item.lower() for kw in lower_case_keywords)]
 
-def jaro(s1, s2):
+def jaro_degree(s1: str, s2: str) -> float:
+    """
+    模糊匹配，返回匹配度。
+    """
     s1, s2 = s1.lower(), s2.lower()
     s1_len, s2_len = len(s1), len(s2)
     if s1_len == 0 and s2_len == 0:
@@ -45,14 +51,17 @@ def jaro(s1, s2):
     transpositions /= 2
     return (matches / s1_len + matches / s2_len + (matches - transpositions) / matches) / 3.0
 
-def jaro_match(keyword, threshold=0.7):
+def jaro_match(keyword, threshold=0.7) -> list:
+    """
+    依据匹配度降序排序。
+    """
     return sorted(
-        [item for item in goods if jaro(item, keyword) > threshold],
-        key=lambda item: jaro(item, keyword),
+        [item for item in goods if jaro_degree(item, keyword) > threshold],
+        key=lambda item: jaro_degree(item, keyword),
         reverse=True
     )
 
-def fetch_by_name(query):
+def fetch_by_name(query: str) -> list:
     query = query.strip()
     if not query:
         return []
@@ -63,4 +72,3 @@ def fetch_by_name(query):
 
     fuzzy_results = jaro_match(query)
     return fuzzy_results
-
